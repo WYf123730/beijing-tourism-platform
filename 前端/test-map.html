@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>高德地图测试</title>
+    <style>body,html,#testMap{width:100%;height:100%;margin:0;padding:0;}</style>
+</head>
+<body>
+    <div id="testMap"></div>
+    <script>
+        window._AMapSecurityConfig = {
+            securityJsCode: '8ce5324e4e2b6d2581059ba506e444fd',
+        };
+    </script>
+    <script src="https://webapi.amap.com/maps?v=2.0&key=9439ed4fbbcd52b4a8110ec0dc4b55dd"></script>
+    <script>
+        console.log('AMap对象:', typeof AMap);
+        if (typeof AMap !== 'undefined') {
+            var map = new AMap.Map('testMap', { center: [116.397, 39.913], zoom: 13 });
+            console.log('地图创建成功！');
+        } else {
+            console.error('AMap未加载！请检查KEY和安全密钥');
+        }
+    </script>
+</body>
+</html>

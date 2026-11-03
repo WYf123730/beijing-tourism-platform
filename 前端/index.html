@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>北京市文旅景点服务平台</title>
+    <!-- 高德地图 JS API 安全密钥（必须配置，否则地图无法加载） -->
+    <!-- 请到 https://console.amap.com/dev/key/index 查看你的安全密钥 -->
+    <script>
+        window._AMapSecurityConfig = {
+            securityJsCode: '8ce5324e4e2b6d2581059ba506e444fd',
+        };
+    </script>
+    <link rel="stylesheet" href="https://a.amap.com/jsapi_demos/static/demo-center/css/demo-center.css"/>
+    <script src="https://webapi.amap.com/maps?v=2.0&key=9439ed4fbbcd52b4a8110ec0dc4b55dd&plugin=AMap.MouseTool,AMap.DistrictSearch,AMap.AutoComplete,AMap.PlaceSearch,AMap.Weather"></script>
+    <!-- 样式文件 -->
+    <link rel="stylesheet" href="css/style.css?v=27">
+</head>
+<body>
+    <!-- ==================== 顶部导航栏 ==================== -->
+    <header id="header">
+        <div class="logo">
+            <h1>🏛️ 北京文旅</h1>
+            <span class="subtitle">景点服务平台</span>
+        </div>
+        <nav class="nav-menu" id="navMenu">
+            <button class="nav-btn active" data-module="map" onclick="switchModule('map')">🗺️ 地图</button>
+            <button class="nav-btn" data-module="query" onclick="switchModule('query')">📍 空间查询</button>
+            <button class="nav-btn" data-module="scenic" onclick="switchModule('scenic')">🏞️ 景点检索</button>
+            <button class="nav-btn" data-module="route" onclick="switchModule('route')">🗺️ 路径规划</button>
+            <button class="nav-btn" data-module="analysis" onclick="switchModule('analysis')">🔍 综合分析</button>
+            <button class="nav-btn" data-module="weather" onclick="switchModule('weather')">🌤️ 天气预报</button>
+            <button class="nav-btn" data-module="admin" id="adminNavBtn" onclick="switchModule('admin')" style="display:none;">⚙️ 管理</button>
+        </nav>
+        <div class="user-area" id="userArea">
+            <button class="btn-login" id="loginBtn" onclick="showLoginModal()">登录/注册</button>
+            <div class="user-info" id="userInfo" style="display:none;">
+                <span class="user-nickname" id="userNickname">用户</span>
+                <button class="btn-logout" onclick="logout()">退出</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- ==================== 主内容区 ==================== -->
+    <div id="mainContainer">
+        <!-- 左侧面板 -->
+        <aside id="sidePanel">
+            <!-- 默认面板：地图工具 -->
+            <div class="panel-content active" id="panel-map">
+                <h3>🗺️ 地图工具</h3>
+                <div class="tool-group">
+                    <button class="tool-btn" onclick="enableMeasure('distance')">📏 距离量算</button>
+                    <button class="tool-btn" onclick="enableMeasure('area')">📐 面积量算</button>
+                    <button class="tool-btn" onclick="clearMeasure()">🗑️ 清除标注</button>
+                </div>
+                <div class="tool-group">
+                    <h4>地图控件</h4>
+                    <label><input type="checkbox" checked onchange="toggleControl2('overview', this.checked)"> 鹰眼</label>
+                    <label><input type="checkbox" checked onchange="toggleControl2('scale', this.checked)"> 比例尺</label>
+                </div>
+                <div class="info-box" id="mapInfoBox">
+                    <p>鼠标悬停查看坐标信息</p>
+                </div>
+            </div>
+
+            <!-- 空间查询面板 -->
+            <div class="panel-content" id="panel-query">
+                <h3>📍 空间查询</h3>
+                <div class="tool-group">
+                    <h4>绘制查询范围</h4>
+                    <button class="tool-btn" onclick="enableDraw('point')">📍 点查询</button>
+                    <button class="tool-btn" onclick="enableDraw('rectangle')">▬ 矩形查询</button>
+                    <button class="tool-btn" onclick="enableDraw('circle')">⭕ 圆形查询</button>
+                    <button class="tool-btn" onclick="enableDraw('polygon')">⬠ 多边形查询</button>
+                    <button class="tool-btn danger" onclick="clearDrawLayer()">🗑️ 清除绘制</button>
+                </div>
+                <div class="filter-group">
+                    <h4>POI类别</h4>
+                    <select id="poiCategory" onchange="onPoiCategoryChange()" style="display:none">
+                        <option value="">全部类别</option>
+                        <option value="hospital">🏥 医院</option>
+                        <option value="school">🏫 学校</option>
+                        <option value="park">🌳 公园</option>
+                        <option value="mall">🛍️ 商场</option>
+                        <option value="bank">🏦 银行</option>
+                        <option value="restaurant">🍜 餐饮</option>
+                        <option value="hotel">🏨 酒店</option>
+                        <option value="gas_station">⛽ 加油站</option>
+                    </select>
+                    <div class="category-tags" id="poiCategoryTags">
+                        <span class="cat-tag active" data-value="" onclick="selectPoiCategory(this,'')">全部</span>
+                        <span class="cat-tag" data-value="hospital" onclick="selectPoiCategory(this,'hospital')">🏥 医院</span>
+                        <span class="cat-tag" data-value="school" onclick="selectPoiCategory(this,'school')">🏫 学校</span>
+                        <span class="cat-tag" data-value="park" onclick="selectPoiCategory(this,'park')">🌳 公园</span>
+                        <span class="cat-tag" data-value="mall" onclick="selectPoiCategory(this,'mall')">🛍️ 商场</span>
+                        <span class="cat-tag" data-value="bank" onclick="selectPoiCategory(this,'bank')">🏦 银行</span>
+                        <span class="cat-tag" data-value="restaurant" onclick="selectPoiCategory(this,'restaurant')">🍜 餐饮</span>
+                        <span class="cat-tag" data-value="hotel" onclick="selectPoiCategory(this,'hotel')">🏨 酒店</span>
+                        <span class="cat-tag" data-value="gas_station" onclick="selectPoiCategory(this,'gas_station')">⛽ 加油站</span>
+                    </div>
+                </div>
+                <div class="result-list" id="queryResultList">
+                    <p class="hint">请在地图上绘制查询范围</p>
+                </div>
+            </div>
+
+            <!-- 景点检索面板 -->
+            <div class="panel-content" id="panel-scenic">
+                <h3>🏞️ 景点检索</h3>
+                <div class="search-box">
+                    <input type="text" id="scenicKeyword" placeholder="输入景点关键词..." onkeydown="if(event.key==='Enter') searchScenic()">
+                    <button class="tool-btn" onclick="searchScenic()">🔍 搜索</button>
+                </div>
+                <div class="filter-group">
+                    <label>分类：</label>
+                    <select id="scenicCategory" onchange="searchScenic()" style="display:none">
+                        <option value="">🏷️ 全部分类</option>
+                        <option value="cultural">🏛️ 人文古迹</option>
+                        <option value="urban">🏙️ 城市地标</option>
+                        <option value="natural">🌿 自然风光</option>
+                    </select>
+                    <div class="category-tags" id="scenicCategoryTags">
+                        <span class="cat-tag active" data-value="" onclick="selectScenicCategory(this,'')">全部</span>
+                        <span class="cat-tag" data-value="cultural" onclick="selectScenicCategory(this,'cultural')">🏛️ 人文古迹</span>
+                        <span class="cat-tag" data-value="urban" onclick="selectScenicCategory(this,'urban')">🏙️ 城市地标</span>
+                        <span class="cat-tag" data-value="natural" onclick="selectScenicCategory(this,'natural')">🌿 自然风光</span>
+                    </div>
+                    <label style="margin-top:6px;display:block;">子分类：</label>
+                    <select id="scenicSubcategory" onchange="searchScenic()" style="display:none">
+                        <option value="">全部子分类</option>
+                        <option value="park">🌳 公园/园林</option>
+                        <option value="museum">🏛️ 博物馆/科技馆</option>
+                        <option value="landmark">🗼 地标建筑</option>
+                        <option value="palace">🏯 宫殿/故居</option>
+                        <option value="temple">⛩️ 寺庙/教堂</option>
+                        <option value="school">🎓 学校</option>
+                        <option value="street">🚶 街区/胡同</option>
+                        <option value="other">📌 其他</option>
+                    </select>
+                    <div class="category-tags" id="scenicSubcategoryTags">
+                        <span class="cat-tag active" data-value="" onclick="selectScenicSubcategory(this,'')">全部</span>
+                        <span class="cat-tag" data-value="park" onclick="selectScenicSubcategory(this,'park')">🌳 公园/园林</span>
+                        <span class="cat-tag" data-value="museum" onclick="selectScenicSubcategory(this,'museum')">🏛️ 博物馆/科技馆</span>
+                        <span class="cat-tag" data-value="landmark" onclick="selectScenicSubcategory(this,'landmark')">🗼 地标建筑</span>
+                        <span class="cat-tag" data-value="palace" onclick="selectScenicSubcategory(this,'palace')">🏯 宫殿/故居</span>
+                        <span class="cat-tag" data-value="temple" onclick="selectScenicSubcategory(this,'temple')">⛩️ 寺庙/教堂</span>
+                        <span class="cat-tag" data-value="school" onclick="selectScenicSubcategory(this,'school')">🎓 学校</span>
+                        <span class="cat-tag" data-value="street" onclick="selectScenicSubcategory(this,'street')">🚶 街区/胡同</span>
+                        <span class="cat-tag" data-value="other" onclick="selectScenicSubcategory(this,'other')">📌 其他</span>
+                    </div>
+                </div>
+                <div class="result-list" id="scenicResultList">
+                    <p class="hint">输入关键词搜索景点</p>
+                </div>
+            </div>
+
+            <!-- 路径规划面板 -->
+            <div class="panel-content" id="panel-route">
+                <h3>🗺️ 路径规划</h3>
+                <!-- Tab切换 -->
+                <div class="route-tabs">
+                    <button class="route-tab active" onclick="switchRouteTab('drive')">🚗 驾车</button>
+                    <button class="route-tab" onclick="switchRouteTab('tsp')">📋 TSP</button>
+                    <button class="route-tab" onclick="switchRouteTab('bus')">🚌 公交</button>
+                </div>
+
+                <!-- 驾车 -->
+                <div class="route-tab-content active" id="route-drive">
+                    <p class="hint">在地图上点击选择起点和终点，或手动输入</p>
+                    <label>起点：</label>
+                    <input type="text" id="driveOrigin" placeholder="点击下方按钮设起点" readonly onclick="setDrivePickMode('origin')">
+                    <label>终点：</label>
+                    <input type="text" id="driveDest" placeholder="点击下方按钮设终点" readonly onclick="setDrivePickMode('dest')">
+                    <div style="display:flex;gap:4px;margin-top:6px;">
+                        <button class="tool-btn" id="pickOriginBtn" onclick="setDrivePickMode('origin')" style="flex:1;font-size:12px;padding:6px 8px;">📍 设起点</button>
+                        <button class="tool-btn" id="pickDestBtn" onclick="setDrivePickMode('dest')" style="flex:1;font-size:12px;padding:6px 8px;background:#ea4335;">📍 设终点</button>
+                    </div>
+                    <div style="display:flex;gap:4px;margin-top:4px;">
+                        <button class="tool-btn" onclick="planDriveRoute()" style="flex:1;">🚗 规划路线</button>
+                        <button class="tool-btn danger" onclick="clearDrivePoints()">✕ 清除</button>
+                    </div>
+                </div>
+
+                <!-- TSP -->
+                <div class="route-tab-content" id="route-tsp">
+                    <p class="hint">搜索景点添加到列表，然后规划最优路线</p>
+                    <div class="search-box">
+                        <input type="text" id="tspKeyword" placeholder="搜索景点...">
+                        <button class="tool-btn" onclick="searchTspSpots()">🔍</button>
+                    </div>
+                    <div class="filter-group">
+                        <label>起点：</label>
+                        <input type="text" id="tspOrigin" value="天安门 (默认)" readonly placeholder="点击地图设起点" style="width:100%;border:1px solid var(--border);border-radius:6px;font-size:14px;background:#f8f9fa;cursor:pointer;">
+                        <button class="tool-btn" onclick="setTspStartFromMap()" style="margin-top:4px;width:100%;font-size:12px;">📍 点击地图设起点</button>
+                    </div>
+                    <div class="tsp-spots-list" id="tspSpotsList">
+                        <p class="hint">已选景点将显示在这里</p>
+                    </div>
+                    <button class="tool-btn" onclick="planTspRoute()">📋 规划最优路线</button>
+                    <button class="tool-btn danger" onclick="clearTspList()">🗑️ 清空列表</button>
+                </div>
+
+                <!-- 公交 -->
+                <div class="route-tab-content" id="route-bus">
+                    <p class="hint">在地图上点击选择起点和终点公交站</p>
+                    <label>起点站：</label>
+                    <input type="text" id="busStart" placeholder="点击站点设起点" readonly>
+                    <label>终点站：</label>
+                    <input type="text" id="busEnd" placeholder="点击站点设终点" readonly>
+                    <div style="display:flex;gap:4px;margin-top:8px;">
+                        <button class="tool-btn" onclick="queryBusRoute()" style="flex:1;">🚌 查询换乘</button>
+                        <button class="tool-btn danger" onclick="clearBusPoints()">✕ 清除</button>
+                    </div>
+                </div>
+
+                <div class="result-list" id="routeResultList"></div>
+            </div>
+
+            <!-- 综合分析面板 -->
+            <div class="panel-content" id="panel-analysis">
+                <h3>🔍 综合分析</h3>
+                <div class="tool-group">
+                    <h4>🚑 救援分析</h4>
+                    <p class="hint">点击地图设置事故点位置</p>
+                    <label>事故点：</label>
+                    <input type="text" id="accidentPoint" placeholder="点击地图设置事故点" readonly>
+                    <label>缓冲区半径（米）：</label>
+                    <input type="number" id="bufferRadius" value="1000" min="100" max="10000" step="100">
+                    <div style="display:flex;gap:4px;">
+                        <button class="tool-btn" onclick="runBufferAnalysis()" style="flex:1;">📊 缓冲区分析</button>
+                        <button class="tool-btn danger" onclick="clearAnalysis()" style="flex:0.4;">🗑️ 清除</button>
+                    </div>
+                    <button class="tool-btn" onclick="runOverlayAnalysis()" style="width:100%;margin-top:4px;">🔲 叠置分析</button>
+                </div>
+                <div class="result-list" id="analysisResultList">
+                    <p class="hint">点击地图设置事故点后进行分析</p>
+                </div>
+            </div>
+
+            <!-- 天气预报面板 -->
+            <div class="panel-content" id="panel-weather">
+                <h3>🌤️ 天气预报 <span style="font-size:13px;color:var(--text-secondary);font-weight:normal;">北京</span></h3>
+                <div class="weather-info" id="weatherDisplay">
+                    <p class="hint">正在获取北京天气数据...</p>
+                </div>
+                <div class="result-list" id="weatherDetailList"></div>
+                <button class="tool-btn" onclick="refreshWeather()" style="margin-top:8px;width:100%;">🔄 刷新天气数据</button>
+            </div>
+
+            <!-- 管理面板 -->
+            <div class="panel-content" id="panel-admin">
+                <h3>⚙️ 景点管理</h3>
+                <button class="tool-btn" onclick="showAddSpotForm()">➕ 新增景点</button>
+                <button class="tool-btn" onclick="loadAdminList()">🔄 刷新</button>
+
+                <!-- 景点列表 -->
+                <div id="adminList">
+                    <div class="result-list" id="adminSpotList">
+                        <p class="hint">加载中...</p>
+                    </div>
+                </div>
+
+                <!-- 新增/编辑表单 -->
+                <div id="adminForm" style="display:none;">
+                    <h4 id="adminFormTitle">新增景点</h4>
+                    <div class="admin-form">
+                        <label>景点名称 *</label>
+                        <input type="text" id="af-name" placeholder="名称" required>
+
+                        <label>经度 *</label>
+                        <input type="number" id="af-longitude" step="0.0001" placeholder="例如 116.397">
+
+                        <label>纬度 *</label>
+                        <input type="number" id="af-latitude" step="0.0001" placeholder="例如 39.913">
+
+                        <label>分类</label>
+                        <select id="af-category">
+                            <option value="cultural">人文</option>
+                            <option value="natural">自然</option>
+                            <option value="urban">城市</option>
+                            <option value="">其他</option>
+                        </select>
+
+                        <label>描述</label>
+                        <textarea id="af-description" rows="3" placeholder="景点介绍"></textarea>
+
+                        <label>地址</label>
+                        <input type="text" id="af-address" placeholder="详细地址">
+
+                        <label>电话</label>
+                        <input type="text" id="af-phone" placeholder="联系电话">
+
+                        <label>开放时间</label>
+                        <input type="text" id="af-open_time" placeholder="例如 08:30-17:00">
+
+                        <label>门票价格</label>
+                        <input type="text" id="af-ticket_price" placeholder="例如 60元">
+
+                        <label>评分</label>
+                        <input type="number" id="af-rating" step="0.1" min="0" max="10" placeholder="0-10">
+
+                        <label>图片URL（多个用逗号分隔）</label>
+                        <input type="text" id="af-images" placeholder="https://...">
+
+                        <p id="adminFormError" class="error-msg" style="color:var(--danger);"></p>
+
+                        <div style="display:flex;gap:8px;margin-top:12px;">
+                            <button class="tool-btn primary" onclick="saveAdminSpot()">💾 保存</button>
+                            <button class="tool-btn danger" onclick="cancelAdminForm()">取消</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </aside>
+
+        <!-- 右侧地图区域 -->
+        <main id="mapContainer">
+            <button id="panelToggle" onclick="togglePanel()" title="隐藏面板">◀</button>
+            <div id="map"></div>
+            <!-- 地图右上角操作提示 -->
+            <div id="mapTip" class="map-tip">点击地图功能模块开始操作</div>
+        </main>
+    </div>
+
+    <!-- ==================== 登录弹窗 ==================== -->
+    <div id="loginModal" class="modal" style="display:none;">
+        <div class="modal-content">
+            <span class="close" onclick="closeLoginModal()">&times;</span>
+            <h2 id="modalTitle">用户登录</h2>
+            <div class="tab-buttons">
+                <button class="tab-btn active" onclick="switchAuthTab('login')">登录</button>
+                <button class="tab-btn" onclick="switchAuthTab('register')">注册</button>
+            </div>
+            <div class="auth-form" id="loginForm">
+                <input type="text" id="loginUsername" placeholder="用户名" required>
+                <input type="password" id="loginPassword" placeholder="密码" required>
+                <button class="tool-btn primary" onclick="login()">登录</button>
+                <p id="loginError" class="error-msg"></p>
+            </div>
+            <div class="auth-form" id="registerForm" style="display:none;">
+                <input type="text" id="regUsername" placeholder="用户名（3-50字符）" required>
+                <input type="password" id="regPassword" placeholder="密码（6-100字符）" required>
+                <input type="text" id="regNickname" placeholder="昵称（选填）">
+                <input type="email" id="regEmail" placeholder="邮箱（选填）">
+                <button class="tool-btn primary" onclick="register()">注册</button>
+                <p id="registerError" class="error-msg"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 脚本（?v=27 防缓存） ==================== -->
+    <script src="js/api.js?v=27"></script>
+    <script src="js/auth.js?v=27"></script>
+    <script src="js/map.js?v=27"></script>
+    <script src="js/query.js?v=27"></script>
+    <script src="js/scenic.js?v=27"></script>
+    <script src="js/route.js?v=27"></script>
+    <script src="js/analysis.js?v=27"></script>
+    <script src="js/weather.js?v=27"></script>
+    <script src="js/admin.js?v=27"></script>
+    <script src="js/app.js?v=27"></script>
+</body>
+</html>
