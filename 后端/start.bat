@@ -1,44 +1,46 @@
 @echo off
-chcp 65001 >nul
-title åŒ—äº¬å¸‚æ–‡æ—…æ™¯ç‚¹æœåŠ¡å¹³å°
+chcp 936 >nul
+title ±±¾©ÊĞÎÄÂÃ¾°µã·şÎñÆ½Ì¨
 echo ============================================
-echo   åŒ—äº¬å¸‚æ–‡æ—…æ™¯ç‚¹æœåŠ¡å¹³å° - å¯åŠ¨è„šæœ¬
+echo   ±±¾©ÊĞÎÄÂÃ¾°µã·şÎñÆ½Ì¨ - Æô¶¯½Å±¾
 echo ============================================
 echo.
 
-:: æœ¬è„šæœ¬å°±åœ¨åç«¯ç›®å½•ï¼Œç›´æ¥åœ¨æ­¤è¿è¡Œ
 cd /d "%~dp0"
 
-:: æ£€æŸ¥ç¯å¢ƒé…ç½®
 if not exist ".env" (
-    echo [ERROR] .env æ–‡ä»¶ä¸å­˜åœ¨
-    echo è¯·ä» .env.example å¤åˆ¶ä¸€ä»½å¹¶å¡«å†™æ•°æ®åº“å¯†ç ä¸é«˜å¾· Key
+    echo [´íÎó] .env ÎÄ¼ş²»´æÔÚ
+    echo Çë´Ó .env.example ¸´ÖÆÒ»·İ²¢ÌîĞ´Êı¾İ¿âÃÜÂëÓë¸ßµÂ Key
     pause
     exit /b 1
 )
 
-:: é€‰æ‹©è§£é‡Šå™¨ï¼šä¼˜å…ˆ PATH é‡Œçš„ pythonï¼Œå¦åˆ™ç”¨ Anaconda
-where python >nul 2>&1
-if errorlevel 1 (
-    set "PY=D:\anaconda\python.exe"
-) else (
-    set "PY=python"
-)
+:: ÌôÑ¡Ò»¸ö×°ÁËÒÀÀµµÄ½âÊÍÆ÷£ºÓÅÏÈ PATH ÀïµÄ python£¬Æä´Î³£¼û°²×°Â·¾¶
+set "PY="
+python -c "import fastapi, uvicorn, aiomysql" >nul 2>&1
+if not errorlevel 1 set "PY=python"
+if defined PY goto HAVE_PY
 
-:: æ£€æŸ¥ä¾èµ–æ˜¯å¦å®‰è£…
-"%PY%" -c "import fastapi" >nul 2>&1
-if errorlevel 1 (
-    echo [INFO] ç¼ºå°‘ä¾èµ–ï¼Œæ­£åœ¨å®‰è£…...
-    "%PY%" -m pip install -r requirements.txt
-)
+if not exist "D:\anaconda\python.exe" goto NO_PY
+"D:\anaconda\python.exe" -c "import fastapi, uvicorn, aiomysql" >nul 2>&1
+if errorlevel 1 goto NO_PY
+set "PY=D:\anaconda\python.exe"
+goto HAVE_PY
 
-:: å¯åŠ¨æœåŠ¡
-echo [INFO] ä½¿ç”¨è§£é‡Šå™¨: %PY%
-echo [INFO] API æ–‡æ¡£: http://127.0.0.1:8001/docs
-echo [INFO] å‰ç«¯é¡µé¢: http://127.0.0.1:8001/app/
-echo [INFO] æŒ‰ Ctrl+C åœæ­¢æœåŠ¡
+:NO_PY
+echo [´íÎó] Ã»ÕÒµ½×°ÁËÒÀÀµµÄ Python ½âÊÍÆ÷
+echo ÇëÖ´ĞĞÏÂÃæÕâĞĞ°²×°ÒÀÀµ£¬ÔÙÖØĞÂÔËĞĞ±¾½Å±¾£º
+echo    pip install -r requirements.txt
+pause
+exit /b 1
+
+:HAVE_PY
+echo [ĞÅÏ¢] ½âÊÍÆ÷: %PY%
+
+
+echo [ĞÅÏ¢] API ÎÄµµ: http://127.0.0.1:8001/docs
+echo [ĞÅÏ¢] Ç°¶ËÒ³Ãæ: http://127.0.0.1:8001/app/
+echo [ĞÅÏ¢] °´ Ctrl+C Í£Ö¹·şÎñ
 echo.
-
 "%PY%" -m uvicorn app:app --reload --host 127.0.0.1 --port 8001
-
 pause
