@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import RedirectResponse
 
+from api import ai as ai_api
 from api import analysis as analysis_api
 from api import query as query_api
 from api import route as route_api
@@ -128,6 +129,7 @@ app.include_router(query_api.router)
 app.include_router(route_api.router)
 app.include_router(analysis_api.router)
 app.include_router(weather_api.router)
+app.include_router(ai_api.router)
 
 # ==================== 挂载前端静态文件 ====================
 frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "前端")

@@ -183,3 +183,12 @@ class OverlayAnalysisRequest(BaseModel):
     """叠置分析请求"""
     lat: float = Field(..., description="事故点纬度")
     lng: float = Field(..., description="事故点经度")
+
+
+# ==================== AI 问答模块（RAG） ====================
+
+class AIAskRequest(BaseModel):
+    """AI 问答请求"""
+    question: str = Field(..., min_length=1, max_length=200, description="用户问题")
+    top_k: int = Field(3, ge=1, le=5, description="召回资料条数")
+    retrieve_only: bool = Field(False, description="仅检索不调用模型，零 token 消耗")

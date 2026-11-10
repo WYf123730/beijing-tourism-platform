@@ -17,7 +17,8 @@
 | 空间查询 | 点加半径 / 矩形 / 圆形 / 多边形 四种方式 | 统一抽象为「点是否在几何内」，叠加 8 类设施过滤 |
 | 路径规划 | 驾车路径、多景点路线、公交换乘 | 高德路径 API + TSP 排列枚举 + BFS/Dijkstra |
 | 综合分析 | 缓冲区分析、叠置分析（应急设施） | 半径筛选 + 距离排序 + 点位片区归属判定 |
-| 天气服务 | 城市天气、景区天气展示 | 定时任务刷缓存，接口只读缓存 |
+| 天气服务 | 城市天气、景区天气展示 | 缓存优先（2 小时 TTL）+ 请求 0.6s 节流，失败降级并标记 stale |
+| AI 问答 | 自然语言问景点，答案附引用来源 | RAG：字面检索召回 + 约束式 Prompt，无资料则拒答 |
 
 ## 界面预览
 
@@ -28,6 +29,10 @@
 **接口文档**：FastAPI 自动生成的 OpenAPI 3.1，全部端点按模块分组，可直接在线调试。
 
 ![接口文档](screenshots/api-docs.png)
+
+**AI 问答**：在页面顶部点「AI 问答」直接提问。左侧依次是答案、本次 token 用量与分段耗时、以及召回的资料清单（含打分），便于核对答案是否有据可依。
+
+![AI 问答](screenshots/ai-qa.png)
 
 ---
 
@@ -40,21 +45,23 @@
 │   ├── database.py             # 异步引擎与会话工厂
 │   ├── models.py               # 7 张表的 ORM 定义
 │   ├── schemas.py              # Pydantic 请求/响应模型
-│   ├── api/                    # 7 个路由模块
+│   ├── api/                    # 8 个路由模块
 │   │   ├── user.py             # 注册登录、JWT 鉴权
 │   │   ├── scenic.py           # 景点 CRUD 与搜索
 │   │   ├── query.py            # 空间查询（4 种几何 + 8 类设施）
 │   │   ├── route.py            # 路径规划与公交换乘
 │   │   ├── analysis.py         # 缓冲区与叠置分析
 │   │   ├── weather.py          # 天气查询
+│   │   ├── ai.py               # RAG 问答接口
 │   │   └── seed.py             # 演示数据初始化
 │   ├── core/                   # 中间件、全局异常、安全工具
 │   ├── services/               # 高德客户端、公交算法、天气定时任务
+│   │   └── rag.py              # RAG 检索内核（网页与命令行共用）
 │   └── logs/                   # 按 10MB 轮转，保留 5 份
 ├── 前端/
 │   ├── index.html
 │   ├── css/style.css
-│   └── js/                     # map / query / route / analysis / weather / auth
+│   └── js/                     # map / query / route / analysis / weather / ai / auth
 └── 数据库/
     └── init_db.sql             # 建表语句与初始数据
 └── ai_demo/                    # AI 问答模块（RAG 最小实现）
@@ -81,6 +88,15 @@
 
 失败集中在语义型：字面匹配能匹配"字"，匹配不了"意思"，这是下一步换成 Embedding 检索的依据。
 详细设计取舍见 [`ai_demo/README.md`](ai_demo/README.md)。
+
+**两个入口，共用同一份检索内核**（`后端/services/rag.py`）：
+
+| 入口 | 用法 |
+|---|---|
+| 网页端 | 页面顶部「🤖 AI 问答」→ 输入问题；勾选「仅检索」则不调用模型，零 token 消耗 |
+| 命令行 | `python rag_demo.py "故宫门票多少钱"`；加 `--dry` 只看检索与 Prompt |
+
+接口为 `POST /api/ai/ask`，返回答案、召回资料与打分、token 用量、分段耗时；未配置密钥或模型调用失败时仍返回检索结果，不会白屏。
 
 ```bash
 cd ai_demo
@@ -131,6 +147,18 @@ uvicorn app:app --reload --port 8001
 
 > 若报 `No module named uvicorn`，通常是 `python` 指向了另一个没装依赖的解释器。
 > 用 `python -m uvicorn app:app --port 8001` 明确指定，或直接运行 `start.bat` 让它自动挑选。
+
+5. 启用 AI 问答（可选）
+
+把 `ai_demo/.env.example` 复制为 `ai_demo/.env`，填入任意 OpenAI 兼容服务的 key：
+
+```
+DEEPSEEK_API_KEY=sk-xxxx
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+DEEPSEEK_MODEL=deepseek-flash
+```
+
+不配置也能用：页面上的「仅检索」模式会直接列出命中的资料与检索打分，不调用模型、零 token 消耗。
 
 ## 关键设计决策
 

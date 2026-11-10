@@ -1,30 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-AI 问答模块（RAG 最小实现）—— 北京市旅游信息服务平台
+AI 问答模块（RAG）—— 命令行入口
 
-链路：
-    用户提问
-      → 检索：从 MySQL 的 scenic 表里挑出最相关的 N 个景点（字面匹配 + 分类词表扩展）
-      → 组装：把景点资料按固定格式填进 Prompt，并约束模型「只依据资料回答」
-      → 生成：调用大模型 API，返回基于资料的答案
-
-第一阶段刻意不用向量库：检索走关键词，是为了先看清「检索召回」这一环到底
-能不能拿到对的东西。等发现字面匹配的局限（比如「适合带孩子」这种没有关键词
-的语义提问召不回结果），再升级成 Embedding 检索，升级的理由就是面试时要讲的那句话。
+检索内核已上收到 后端/services/rag.py，网页端 /api/ai/ask 与这个脚本共用同一份实现，
+这里只负责：读景点表、拼输出、提供命令行参数。
 
 用法：
-    python rag_demo.py "故宫有什么值得看的"          正常问答
-    python rag_demo.py "北京有哪些适合孩子的博物馆" --dry    只跑检索，看命中和 Prompt
-    python rag_demo.py "..." --topk 3               指定召回条数
+    python rag_demo.py "故宫有什么值得看的"                  正常问答
+    python rag_demo.py "北京有哪些适合孩子的博物馆" --dry      只跑检索，看命中和 Prompt
+    python rag_demo.py "..." --topk 3                       指定召回条数
 """
 
 import argparse
-import json
-import ssl
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 # Windows 控制台默认不是 UTF-8，先改掉，否则中文会报编码错
@@ -35,52 +24,23 @@ except Exception:
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BASE_DIR.parent
-BACKEND_ENV = PROJECT_DIR / "后端" / ".env"      # 数据库连接复用项目原有配置
-LLM_ENV = BASE_DIR / ".env"                       # 大模型 key 单独存放，不进 git
+BACKEND_DIR = PROJECT_DIR / "后端"
+BACKEND_ENV = BACKEND_DIR / ".env"      # 数据库连接复用项目原有配置
+LLM_ENV = BASE_DIR / ".env"             # 大模型 key 单独存放，不进 git
 
-# ---------------------------------------------------------------- 字典表
+# 复用后端检索内核，避免同一套打分逻辑维护两份
+sys.path.insert(0, str(BACKEND_DIR))
+from services.rag import (  # noqa: E402
+    build_prompt,
+    llm_config,
+    retrieve,
+    run_rag,
+    to_doc,
+)
 
-CATEGORY_CN = {
-    "cultural": "人文古迹",
-    "urban": "城市地标",
-    "natural": "自然风光",
-}
-
-SUBCATEGORY_CN = {
-    "museum": "博物馆",
-    "park": "公园",
-    "school": "高校",
-    "landmark": "地标",
-    "temple": "寺庙",
-    "street": "街区",
-    "palace": "宫殿",
-    "other": "其他",
-}
-
-# 把用户口语里的词映射到分类，弥补字面匹配抓不到类别语义的问题
-QUERY_HINTS = {
-    "museum": ["博物馆", "展馆", "展览", "文物", "藏品", "科技馆", "美术馆"],
-    "park": ["公园", "园林", "绿地", "散步", "遛弯", "湖", "划船"],
-    "school": ["大学", "高校", "校园", "学院", "名校"],
-    "temple": ["寺", "庙", "烧香", "祈福", "道观"],
-    "street": ["街", "胡同", "小吃", "逛街", "购物", "夜市", "美食"],
-    "palace": ["宫殿", "皇宫", "皇家", "故宫", "紫禁城", "皇帝"],
-    "landmark": ["地标", "广场", "建筑", "打卡", "拍照"],
-    "natural": ["山", "自然", "风景", "户外", "爬山", "风光"],
-}
-
-# 检索时忽略的虚词，避免「有什么」「值得」这类词污染打分
-STOPWORDS = {
-    "有什", "什么", "哪些", "哪个", "怎么", "怎样", "为什", "可以", "值得",
-    "推荐", "介绍", "一下", "多少", "几点", "需要", "附近", "北京", "的", "吗",
-    "呢", "去", "在", "和", "是", "有", "我", "想", "要", "请问",
-}
-
-
-# ---------------------------------------------------------------- 配置读取
 
 def load_env(path: Path) -> dict:
-    """极简 .env 解析，避免为一个文件引入 python-dotenv 依赖。"""
+    """极简 .env 解析。"""
     cfg = {}
     if not path.exists():
         return cfg
@@ -101,24 +61,6 @@ def db_config() -> dict:
         raise SystemExit(f"数据库配置缺失：{missing}（应位于 {BACKEND_ENV}）")
     return cfg
 
-
-def llm_config() -> dict:
-    cfg = load_env(LLM_ENV)
-    key = cfg.get("DEEPSEEK_API_KEY", "")
-    if not key:
-        raise SystemExit(
-            f"未找到 DEEPSEEK_API_KEY。\n"
-            f"请在 {LLM_ENV} 里填一行：DEEPSEEK_API_KEY=sk-xxxx\n"
-            f"（只想看检索效果可以加 --dry，不调用模型）"
-        )
-    return {
-        "api_key": key,
-        "base_url": cfg.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1").rstrip("/"),
-        "model": cfg.get("DEEPSEEK_MODEL", "deepseek-flash"),
-    }
-
-
-# ---------------------------------------------------------------- 资料准备
 
 def fetch_spots() -> list:
     """从 MySQL 读景点，效果等同于「把资料灌进知识库」这一步。"""
@@ -150,153 +92,6 @@ def fetch_spots() -> list:
         conn.close()
 
 
-def to_doc(row: dict) -> dict:
-    """一行景点 → 一段资料。字段固定成模板，模型读起来更稳，也方便你排查。"""
-    cat = CATEGORY_CN.get(row["category"], row["category"] or "未分类")
-    sub = SUBCATEGORY_CN.get(row["subcategory"], row["subcategory"] or "")
-    lines = [f"【{row['name']}】", f"类别：{cat} / {sub}".rstrip(" /")]
-    if row.get("address"):
-        lines.append(f"地址：{row['address']}")
-    if row.get("open_time"):
-        lines.append(f"开放时间：{row['open_time']}")
-    meta = []
-    if row.get("ticket_price"):
-        meta.append(f"门票：{row['ticket_price']}")
-    if row.get("rating"):
-        meta.append(f"评分：{row['rating']}")
-    if meta:
-        lines.append("　".join(meta))
-    if row.get("description"):
-        lines.append(f"简介：{row['description']}")
-    return {
-        "id": row["id"],
-        "name": row["name"],
-        "category": row["category"],
-        "subcategory": row["subcategory"],
-        "text": "\n".join(lines),
-    }
-
-
-# ---------------------------------------------------------------- 检索
-
-def tokenize(query: str) -> list:
-    """中文没有空格，用 2-gram 切，简单但对景点名这类短词够用。"""
-    q = "".join(ch for ch in query if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
-    grams = {q[i:i + 2] for i in range(len(q) - 1)}
-    return [g for g in grams if g not in STOPWORDS]
-
-
-def expand_categories(query: str) -> set:
-    """把「适合带孩子」「逛街」这类说法映射到分类。"""
-    hit = set()
-    for sub, words in QUERY_HINTS.items():
-        if any(w in query for w in words):
-            hit.add(sub)
-    return hit
-
-
-def retrieve(query: str, docs: list, top_k: int = 3) -> list:
-    """
-    字面检索打分：
-        景点名命中   ×4（一个提问里出现景点名，几乎肯定就是问它）
-        正文命中     ×1（按命中词数累加）
-        分类命中     +3（通过 QUERY_HINTS 扩展出来的类别）
-    这就是「朴素基线」。它答不上纯语义提问——这正是后面要换向量的原因。
-    """
-    grams = tokenize(query)
-    cats = expand_categories(query)
-    scored = []
-    for doc in docs:
-        name_hit = sum(1 for g in grams if g in doc["name"])
-        body_hit = sum(1 for g in grams if g in doc["text"])
-        score = name_hit * 4 + body_hit
-        if doc["subcategory"] in cats:
-            score += 3
-        if doc["category"] in cats:
-            score += 2
-        if score > 0:
-            scored.append((score, doc))
-    scored.sort(key=lambda x: (-x[0], x[1]["id"]))
-    return [{"score": s, **d} for s, d in scored[:top_k]]
-
-
-# ---------------------------------------------------------------- Prompt
-
-SYSTEM_PROMPT = (
-    "你是北京旅游信息助手。只能依据用户消息中【资料】部分的内容回答。\n"
-    "规则：\n"
-    "1. 资料里没有的信息，直接回答「资料中暂未收录」，不要推测，不要编造。\n"
-    "2. 不要输出资料之外的常识，哪怕你确定它是真的。\n"
-    "3. 回答控制在 120 字以内，分点列出关键信息。\n"
-    "4. 结尾单独一行注明：依据景点：XXX、XXX"
-)
-
-
-def build_prompt(query: str, hits: list) -> list:
-    if hits:
-        context = "\n\n".join(f"资料{i + 1}：\n{h['text']}" for i, h in enumerate(hits))
-    else:
-        context = "（本轮检索未命中任何景点资料）"
-    user = f"【资料】\n{context}\n\n【问题】{query}"
-    return [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user},
-    ]
-
-
-# ---------------------------------------------------------------- 模型调用
-
-def _ssl_context(host: str):
-    """
-    先按正常校验；如果本机有代理在做 HTTPS 解密导致证书链不认，再退回不校验。
-    退回时会打印警告，方便你知道是自己网络环境的问题，而不是代码写错了。
-    """
-    ctx = ssl.create_default_context()
-    try:
-        with urllib.request.urlopen(f"https://{host}", timeout=8, context=ctx):
-            pass
-    except ssl.SSLError:
-        print("[警告] 本机 HTTPS 证书校验未通过（通常是有代理在解密），已临时跳过校验。")
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-    except Exception:
-        pass
-    return ctx
-
-
-def ask_llm(messages: list, cfg: dict) -> dict:
-    url = f"{cfg['base_url']}/chat/completions"
-    payload = json.dumps({
-        "model": cfg["model"],
-        "messages": messages,
-        "temperature": 0.2,
-        "max_tokens": 600,
-    }).encode("utf-8")
-
-    host = url.split("://", 1)[-1].split("/", 1)[0]
-    ctx = _ssl_context(host)
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {cfg['api_key']}",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=90, context=ctx) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", "ignore")[:300]
-        raise SystemExit(f"接口返回 {e.code}：{body}")
-    except urllib.error.URLError as e:
-        raise SystemExit(f"网络请求失败：{e.reason}")
-
-
-# ---------------------------------------------------------------- 主流程
-
 def main():
     parser = argparse.ArgumentParser(description="RAG 问答演示")
     parser.add_argument("question", help="要问的问题")
@@ -327,18 +122,26 @@ def main():
         print(f"[user]\n{messages[1]['content']}")
         return
 
-    cfg = llm_config()
+    cfg = llm_config(LLM_ENV)
+    if not cfg:
+        raise SystemExit(
+            f"未找到 DEEPSEEK_API_KEY。\n"
+            f"请在 {LLM_ENV} 里填一行：DEEPSEEK_API_KEY=sk-xxxx\n"
+            f"（只想看检索效果可以加 --dry，不调用模型）"
+        )
+
     t2 = time.perf_counter()
-    data = ask_llm(messages, cfg)
+    result = run_rag(args.question, docs, cfg, args.topk)
     t_gen = (time.perf_counter() - t2) * 1000
 
-    answer = data["choices"][0]["message"]["content"].strip()
-    usage = data.get("usage", {})
+    if not result["answer"]:
+        raise SystemExit(result["notice"] or "模型未返回内容")
 
+    usage = result["usage"]
     print("\n" + "=" * 60)
     print(f"【回答】模型 {cfg['model']}　耗时 {t_gen:.0f} ms")
     print("=" * 60)
-    print(answer)
+    print(result["answer"])
     print("-" * 60)
     print(
         f"token：输入 {usage.get('prompt_tokens', '?')} / "

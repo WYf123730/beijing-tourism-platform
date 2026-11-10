@@ -30,6 +30,7 @@
             <button class="nav-btn" data-module="route" onclick="switchModule('route')">🗺️ 路径规划</button>
             <button class="nav-btn" data-module="analysis" onclick="switchModule('analysis')">🔍 综合分析</button>
             <button class="nav-btn" data-module="weather" onclick="switchModule('weather')">🌤️ 天气预报</button>
+            <button class="nav-btn" data-module="ai" onclick="switchModule('ai')">🤖 AI 问答</button>
             <button class="nav-btn" data-module="admin" id="adminNavBtn" onclick="switchModule('admin')" style="display:none;">⚙️ 管理</button>
         </nav>
         <div class="user-area" id="userArea">
@@ -247,6 +248,42 @@
                 <button class="tool-btn" onclick="refreshWeather()" style="margin-top:8px;width:100%;">🔄 刷新天气数据</button>
             </div>
 
+            <!-- AI 问答面板 -->
+            <div class="panel-content" id="panel-ai">
+                <h3>🤖 AI 问答 <span class="ai-badge">RAG 检索增强</span></h3>
+
+                <div class="tool-group">
+                    <textarea id="aiQuestion" class="ai-input" rows="3"
+                        placeholder="问点什么，比如：故宫门票多少钱，几点开门"></textarea>
+
+                    <div class="ai-chips">
+                        <button class="ai-chip" onclick="fillAIQuestion('故宫门票多少钱，几点开门')">故宫门票</button>
+                        <button class="ai-chip" onclick="fillAIQuestion('北京有哪些博物馆')">有哪些博物馆</button>
+                        <button class="ai-chip" onclick="fillAIQuestion('故宫附近有火锅吗')">试试拒答</button>
+                        <button class="ai-chip" onclick="fillAIQuestion('天坛公园开放时间')">天坛开放时间</button>
+                    </div>
+
+                    <label class="ai-switch">
+                        <input type="checkbox" id="aiRetrieveOnly">
+                        <span>仅检索，不调用模型（零 token 成本）</span>
+                    </label>
+
+                    <button class="tool-btn primary" id="aiAskBtn" onclick="askAI()"
+                        style="width:100%;margin-top:8px;">发送提问</button>
+                </div>
+
+                <div id="aiResult" style="display:none;">
+                    <div class="ai-answer" id="aiAnswer"></div>
+                    <div class="ai-notice" id="aiNotice" style="display:none;"></div>
+                    <div class="ai-meta" id="aiMeta"></div>
+
+                    <h4>检索命中的资料</h4>
+                    <div class="result-list" id="aiSources"></div>
+                </div>
+
+                <p class="hint" id="aiHint">正在检查模型配置...</p>
+            </div>
+
             <!-- 管理面板 -->
             <div class="panel-content" id="panel-admin">
                 <h3>⚙️ 景点管理</h3>
@@ -357,7 +394,8 @@
     <script src="js/scenic.js?v=27"></script>
     <script src="js/route.js?v=27"></script>
     <script src="js/analysis.js?v=27"></script>
-    <script src="js/weather.js?v=27"></script>
+    <script src="js/weather.js?v=28"></script>
+    <script src="js/ai.js?v=28"></script>
     <script src="js/admin.js?v=27"></script>
     <script src="js/app.js?v=27"></script>
 </body>
