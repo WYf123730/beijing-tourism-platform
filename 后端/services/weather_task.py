@@ -2,6 +2,7 @@
 天气定时任务模块
 使用 APScheduler 定时从高德地图 API 获取天气数据并缓存到数据库
 """
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -50,12 +51,12 @@ async def fetch_and_cache_weather(city: str, adcode: str):
         result = await amap_client.get_weather(adcode, extensions="base")
         if result.get("status") != "1":
             logger.warning(f"天气获取失败 [{city}]: {result.get('info', '未知错误')}")
-            return
+            return False
 
         lives = result.get("lives", [])
         if not lives:
             logger.warning(f"天气数据为空 [{city}]")
-            return
+            return False
 
         weather_info = lives[0]
 
@@ -75,31 +76,34 @@ async def fetch_and_cache_weather(city: str, adcode: str):
             "forecast": forecast.get("casts", []) if forecast else [],
         }
 
-        # 缓存到数据库
+        # 缓存到数据库（weather_data 字段是 JSON 列，交给 SQLAlchemy 序列化，
+        # 不要再手工 json.dumps，否则会写成「JSON 的 JSON」，读的时候要解两层）
         async with AsyncSessionLocal() as db:
             async with db.begin():
                 result = await db.execute(
                     select(WeatherCache).where(WeatherCache.adcode == adcode)
                 )
-                existing = result.scalar_one_or_none()
+                existing = result.scalars().first()
 
                 if existing:
-                    existing.weather_data = json.dumps(weather_data, ensure_ascii=False)
+                    existing.weather_data = weather_data
                     existing.updated_at = datetime.now()
                 else:
                     cache = WeatherCache(
                         city=city,
                         adcode=adcode,
-                        weather_data=json.dumps(weather_data, ensure_ascii=False),
+                        weather_data=weather_data,
                     )
                     db.add(cache)
 
             await db.commit()
 
         logger.info(f"天气缓存更新成功 [{city}]: {weather_info.get('weather', '')} {weather_info.get('temperature', '')}°C")
+        return True
 
     except Exception as e:
         logger.error(f"天气获取失败 [{city}]: {e}")
+        return False
 
 
 async def fetch_all_attractions_weather():
@@ -113,10 +117,23 @@ async def fetch_all_attractions_weather():
             spots = result.scalars().all()
 
         # 先拉取预定义的北京各区天气
+        ok, fail = 0, 0
         for city_info in ATTRACTIONS_CITIES:
-            await fetch_and_cache_weather(city_info["city"], city_info["adcode"])
+            city, adcode = city_info["city"], city_info["adcode"]
+            done = await fetch_and_cache_weather(city, adcode)
+            if not done:
+                await asyncio.sleep(1.5)     # 可能是被限流，退让后重试一次
+                done = await fetch_and_cache_weather(city, adcode)
+            if done:
+                ok += 1
+            else:
+                fail += 1
+            # 高德天气接口有 QPS 限制，连续快速请求会触发 CUQPS_HAS_EXCEEDED_THE_LIMIT。
+            # 一旦失败，该区缓存就停在上一次成功的值（出现过朝阳区沿用三个月前数据、
+            # 地图上 34℃ 与 3℃ 并存的情况），因此必须留出间隔。
+            await asyncio.sleep(0.6)
 
-        logger.info(f"定时天气拉取完成，共更新 {len(ATTRACTIONS_CITIES)} 个区域天气")
+        logger.info(f"定时天气拉取完成：成功 {ok} 个，失败 {fail} 个")
     except Exception as e:
         logger.error(f"定时天气拉取失败: {e}")
 

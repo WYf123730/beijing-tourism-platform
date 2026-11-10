@@ -3,9 +3,11 @@
 城市天气查询、景区天气查询（从缓存或实时获取）
 支持按景区所在区/县返回独立天气数据
 """
+import asyncio
 import json
 import logging
-import re
+import time
+from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -48,13 +50,65 @@ def extract_district_from_address(address: str) -> str:
     return "北京"
 
 
+CACHE_TTL_MINUTES = 120      # 缓存新鲜期：2 小时内直接复用，不再打高德
+MIN_API_INTERVAL = 0.6       # 两次高德调用最小间隔（秒），规避 QPS 限制
+_last_api_call = 0.0
+
+
+def _decode_cache(raw):
+    """解析缓存字段。历史上 JSON 列被重复编码，最多解两层以兼容新旧数据"""
+    for _ in range(2):
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                return None
+        else:
+            break
+    return raw if isinstance(raw, dict) else None
+
+
+async def _throttle_api():
+    """按最小间隔节流，防止批量请求把高德 QPS 打爆后集体降级"""
+    global _last_api_call
+    wait = MIN_API_INTERVAL - (time.monotonic() - _last_api_call)
+    if wait > 0:
+        await asyncio.sleep(wait)
+    _last_api_call = time.monotonic()
+
+
 async def get_weather_for_location(district: str, db: AsyncSession) -> dict:
-    """获取指定区/县的实时天气（按区独立从高德获取）"""
-    # 使用区县对应的 adcode 独立查询高德 API
+    """
+    获取指定区/县天气（缓存优先）
+
+    策略：
+    - 缓存新鲜（TTL 内）→ 直接返回，不调高德。58 个景点分布在十余个区，
+      若每次都实时查会瞬间打满 QPS，从而失败降级到过期数据
+    - 缓存过期或缺失 → 实时拉一次并回写
+    - 实时失败 → 退回旧缓存并标记 stale，前端可据此提示数据可能过期
+    """
     adcode = DISTRICT_KEYWORDS.get(district, "110000")
 
-    # 优先实时获取该区天气
+    cached, cached_at = None, None
     try:
+        result = await db.execute(
+            select(WeatherCache).where(WeatherCache.adcode == adcode)
+        )
+        row = result.scalars().first()
+        if row:
+            cached = _decode_cache(row.weather_data)
+            cached_at = row.updated_at
+    except Exception as e:
+        logger.warning(f"读取天气缓存失败 [{district}]: {e}")
+
+    if cached and cached_at:
+        age_min = (datetime.now() - cached_at).total_seconds() / 60
+        if age_min < CACHE_TTL_MINUTES:
+            return cached
+
+    # 缓存过期或缺失，实时拉取
+    try:
+        await _throttle_api()
         result = await amap_client.get_weather(adcode, extensions="base")
         if result.get("status") == "1" and result.get("lives"):
             w = result["lives"][0]
@@ -68,45 +122,31 @@ async def get_weather_for_location(district: str, db: AsyncSession) -> dict:
                 "humidity": w.get("humidity", ""),
                 "reporttime": w.get("reporttime", ""),
             }
-            # 后台更新缓存
             try:
                 async with AsyncSessionLocal() as cache_db:
                     existing = await cache_db.execute(
                         select(WeatherCache).where(WeatherCache.adcode == adcode)
                     )
-                    existing_row = existing.scalar_one_or_none()
-                    if existing_row:
-                        existing_row.weather_data = json.dumps(weather_data, ensure_ascii=False)
+                    row = existing.scalars().first()
+                    if row:
+                        row.weather_data = weather_data
+                        row.updated_at = datetime.now()
                     else:
                         cache_db.add(WeatherCache(
-                            city=district, adcode=adcode,
-                            weather_data=json.dumps(weather_data, ensure_ascii=False)
+                            city=district, adcode=adcode, weather_data=weather_data
                         ))
                     await cache_db.commit()
             except Exception as e:
-                logger.warning(f"天气缓存更新失败 [{district}]: {e}")
+                logger.warning(f"天气缓存写入失败 [{district}]: {e}")
             return weather_data
     except Exception as e:
         logger.warning(f"实时天气获取失败 [{district}]: {e}")
 
-    # 实时失败，降级用该区缓存
-    try:
-        result = await db.execute(
-            select(WeatherCache).where(WeatherCache.adcode == adcode)
-        )
-        cached = result.scalar_one_or_none()
-        if cached:
-            wd = cached.weather_data
-            if isinstance(wd, str):
-                try:
-                    wd = json.loads(wd)
-                except (json.JSONDecodeError, TypeError):
-                    wd = {}
-            if wd and isinstance(wd, dict) and wd.get("weather"):
-                return wd
-    except Exception:
-        pass
-
+    # 降级：返回旧缓存，但打上 stale 标记
+    if cached:
+        stale = dict(cached)
+        stale["stale"] = True
+        return stale
     return {}
 
 
@@ -147,18 +187,19 @@ async def get_city_weather(city: str, db: AsyncSession = Depends(get_db)):
                 "forecast": forecasts.get("casts", []),
             }
 
-        # 异步更新缓存（不阻塞返回）
+        # 异步更新缓存（不阻塞返回）。按 adcode 匹配，避免同一城市写入多条重复记录
         try:
             async with AsyncSessionLocal() as cache_db:
                 cached = await cache_db.execute(
-                    select(WeatherCache).where(WeatherCache.city == city)
+                    select(WeatherCache).where(WeatherCache.adcode == adcode)
                 )
-                existing = cached.scalar_one_or_none()
+                existing = cached.scalars().first()
                 if existing:
-                    existing.weather_data = json.dumps(weather_data, ensure_ascii=False)
+                    existing.weather_data = weather_data
+                    existing.updated_at = datetime.now()
                 else:
                     cache_db.add(WeatherCache(city=city, adcode=adcode,
-                        weather_data=json.dumps(weather_data, ensure_ascii=False)))
+                        weather_data=weather_data))
                 await cache_db.commit()
         except Exception as cache_err:
             logger.warning(f"天气缓存更新失败: {cache_err}")
