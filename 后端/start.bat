@@ -1,47 +1,44 @@
 @echo off
+chcp 65001 >nul
 title 北京市文旅景点服务平台
 echo ============================================
-echo  北京市文旅景点服务平台 - 启动脚本
+echo   北京市文旅景点服务平台 - 启动脚本
 echo ============================================
 echo.
 
-:: 切换到后端目录
-cd /d "%~dp0backend"
-
-:: 检查虚拟环境
-if exist "..\gis-backend\Scripts\activate.bat" (
-    echo [INFO] 使用 gis-backend 虚拟环境
-    call ..\gis-backend\Scripts\activate.bat
-) else if exist "..\..\gis-backend\Scripts\activate.bat" (
-    echo [INFO] 使用上级目录虚拟环境
-    call ..\..\gis-backend\Scripts\activate.bat
-) else (
-    echo [WARN] 未找到 gis-backend 虚拟环境，尝试直接启动
-)
-
-:: 检查依赖是否安装
-pip show fastapi >nul 2>&1
-if errorlevel 1 (
-    echo [INFO] 正在安装依赖...
-    pip install -r requirements.txt
-)
+:: 本脚本就在后端目录，直接在此运行
+cd /d "%~dp0"
 
 :: 检查环境配置
 if not exist ".env" (
-    echo [ERROR] .env 文件不存在！
-    echo 请从 .env.example 复制并配置数据库和密钥信息
+    echo [ERROR] .env 文件不存在
+    echo 请从 .env.example 复制一份并填写数据库密码与高德 Key
     pause
     exit /b 1
 )
 
+:: 选择解释器：优先 PATH 里的 python，否则用 Anaconda
+where python >nul 2>&1
+if errorlevel 1 (
+    set "PY=D:\anaconda\python.exe"
+) else (
+    set "PY=python"
+)
+
+:: 检查依赖是否安装
+"%PY%" -c "import fastapi" >nul 2>&1
+if errorlevel 1 (
+    echo [INFO] 缺少依赖，正在安装...
+    "%PY%" -m pip install -r requirements.txt
+)
+
 :: 启动服务
-echo.
-echo [INFO] 启动 FastAPI 服务...
-echo [INFO] API 文档: http://localhost:8001/docs
-echo [INFO] 前端页面: http://localhost:8001/app/
+echo [INFO] 使用解释器: %PY%
+echo [INFO] API 文档: http://127.0.0.1:8001/docs
+echo [INFO] 前端页面: http://127.0.0.1:8001/app/
 echo [INFO] 按 Ctrl+C 停止服务
 echo.
 
-uvicorn app:app --reload --host 0.0.0.0 --port 8001
+"%PY%" -m uvicorn app:app --reload --host 127.0.0.1 --port 8001
 
 pause
